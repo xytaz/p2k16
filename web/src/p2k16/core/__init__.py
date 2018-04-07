@@ -1,8 +1,9 @@
 import logging
-import os
 
 from flask import Flask
 from flask_env import MetaFlaskEnv
+
+from . import boot
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +33,9 @@ def make_app():
     app.config['BOWER_COMPONENTS_ROOT'] = '../web/bower_components'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-    p2k16_config = os.getenv('P2K16_CONFIG')
-    if p2k16_config:
-        p2k16_config = os.path.abspath(p2k16_config)
-
-        config_default = os.path.join(os.path.dirname(p2k16_config), "config-default.cfg")
-        config_default = os.path.abspath(config_default)
-
-        logger.info("Loading defaults from {}".format(config_default))
-        app.config.from_pyfile(config_default)
-
-        logger.info("Loading config from {}".format(p2k16_config))
-        app.config.from_pyfile(p2k16_config)
+    for f in boot.find_config_files():
+        logger.info("Loading config from {}".format(f))
+        app.config.from_pyfile(f)
 
     # Allow the environment variables to override by loading them lastly
     app.config.from_object(Configuration)

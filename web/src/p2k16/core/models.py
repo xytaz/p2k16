@@ -7,21 +7,73 @@ from itertools import chain
 from typing import Optional, List, Iterable
 
 import flask_bcrypt
-from flask_sqlalchemy import SQLAlchemy
+import p2k16.core.boot
+import sqlalchemy.orm.session
 from p2k16.core import P2k16TechnicalException
-from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Numeric, Boolean, Sequence
+from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Numeric, Boolean, Sequence, UniqueConstraint
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship, joinedload
 
 logger = logging.getLogger(__name__)
 
-db = SQLAlchemy()
+# This for the standalone applications
+Session = None  # type: sqlalchemy.orm.session.Session
 
-from sqlalchemy_continuum.plugins import FlaskPlugin
-from sqlalchemy_continuum import make_versioned
+db = None
 
-make_versioned(plugins=[FlaskPlugin()], user_cls=None)
+if p2k16.core.boot.model_should_use_flask:
+    import flask_sqlalchemy
+
+    # The SQLAlchemy is a strange object. Unwrap it so the db access mainly feels like a standard sqlalchemy usage.
+    db = flask_sqlalchemy.SQLAlchemy()
+    Base = db.Model  # For some reason flask-sqlalchemy decided to rename Base to Model.
+    # Session = db.session
+
+else:
+    import sqlalchemy
+    from sqlalchemy.ext.declarative import declarative_base
+    from sqlalchemy.orm import sessionmaker
+
+    cfg = p2k16.core.boot.load_config()
+
+    _engine = sqlalchemy.create_engine(cfg["SQLALCHEMY_DATABASE_URI"],
+                                       echo=cfg["SQLALCHEMY_ECHO"])  # type: sqlalchemy.engine.Engine
+    Session = sessionmaker(bind=_engine)
+
+    # This stuff is to remain compatible with flask-sqlalchemy as long as that code is used.
+
+    class FakeDb(object):
+        @property
+        def session(self):
+            return Session()
+
+    class _QueryProperty(object):
+        import sqlalchemy.orm
+        import sqlalchemy.orm.exc
+
+        def __init__(self, sa):
+            self.sa = sa
+
+        def __get__(self, obj, type):
+            try:
+                mapper = sqlalchemy.orm.class_mapper(type)
+                if mapper:
+                    return type.query_class(mapper, session=Session())
+            except sqlalchemy.orm.exc.UnmappedClassError:
+                return None
+
+
+    Base = declarative_base()
+    Base.query = _QueryProperty(None)
+
+    db = FakeDb()
+
+if p2k16.core.boot.model_should_use_version_tables:
+    from sqlalchemy_continuum.plugins import FlaskPlugin
+    from sqlalchemy_continuum import make_versioned
+
+    make_versioned(plugins=[FlaskPlugin()], user_cls=None)
 
 
 class ModelSupport(object):
@@ -83,7 +135,7 @@ model_support = ModelSupport()
 
 
 class P2k16Mixin(object):
-    id_seq = Sequence('id_seq', metadata=db.Model.metadata)
+    id_seq = Sequence('id_seq', metadata=Base.metadata)
     id = Column(Integer, id_seq, primary_key=True)
 
 
@@ -141,7 +193,7 @@ class ImmutableDefaultMixin(P2k16Mixin, CreatedAtMixin, CreatedByMixin):
 
 
 # This is the default Mixin without the CreatedBy/UpdatedBy mixins to prevent recursion.
-class Account(P2k16Mixin, CreatedAtMixin, UpdatedAtMixin, db.Model):
+class Account(P2k16Mixin, CreatedAtMixin, UpdatedAtMixin, Base):
     __tablename__ = 'account'
     __versioned__ = {}
 
@@ -246,7 +298,7 @@ class CircleManagementStyle(enum.Enum):
     SELF_ADMIN = 2
 
 
-class Circle(DefaultMixin, db.Model):
+class Circle(DefaultMixin, Base):
     __tablename__ = 'circle'
     __versioned__ = {}
 
@@ -288,17 +340,17 @@ class Circle(DefaultMixin, db.Model):
         return Circle.query.filter(Circle.name == name).one()
 
 
-class CircleMember(DefaultMixin, db.Model):
+class CircleMember(DefaultMixin, Base):
     __tablename__ = 'circle_member'
     __versioned__ = {}
 
     circle_id = Column("circle", Integer, ForeignKey('circle.id'), nullable=False)
     account_id = Column("account", Integer, ForeignKey('account.id'), nullable=False)
 
-    db.UniqueConstraint(circle_id, account_id)
-
     circle = relationship("Circle")
     account = relationship("Account", foreign_keys=[account_id])
+
+    __table_args__ = (UniqueConstraint(circle_id, account_id),)
 
     def __init__(self, circle: Circle, account: Account):
         super().__init__()
@@ -309,7 +361,7 @@ class CircleMember(DefaultMixin, db.Model):
         return '<CircleMember:%s, circle=%s, account=%s>' % (self.id, self.circle_id, self.account_id)
 
 
-class Event(ImmutableDefaultMixin, db.Model):
+class Event(ImmutableDefaultMixin, Base):
     __tablename__ = 'event'
     # Not versioned, events are append-only
 
@@ -350,7 +402,7 @@ class Event(ImmutableDefaultMixin, db.Model):
         return '<Event:%r, created_by=%s, domain=%s, name=%s>' % (self.id, self.created_by_id, self.domain, self.name)
 
 
-class Membership(DefaultMixin, db.Model):
+class Membership(DefaultMixin, Base):
     __tablename__ = 'membership'
     __versioned__ = {}
 
@@ -368,7 +420,7 @@ class Membership(DefaultMixin, db.Model):
         return '<Membership:%r, fee=%r>' % (self.id, self.fee)
 
 
-class MembershipPayment(DefaultMixin, db.Model):
+class MembershipPayment(DefaultMixin, Base):
     __tablename__ = 'membership_payment'
     __versioned__ = {}
 
@@ -391,7 +443,7 @@ class MembershipPayment(DefaultMixin, db.Model):
             self.id, self.created_by_id, self.start_date, self.end_date, self.amount)
 
 
-class StripeCustomer(DefaultMixin, db.Model):
+class StripeCustomer(DefaultMixin, Base):
     __tablename__ = 'stripe_customer'
     __versioned__ = {}
 
@@ -406,7 +458,7 @@ class StripeCustomer(DefaultMixin, db.Model):
             self.id, self.created_by_id, self.stripe_id)
 
 
-class Company(DefaultMixin, db.Model):
+class Company(DefaultMixin, Base):
     __tablename__ = 'company'
     __versioned__ = {}
 
@@ -435,7 +487,7 @@ class Company(DefaultMixin, db.Model):
         return Company.query.filter(Company.id == _id).one()
 
 
-class CompanyEmployee(DefaultMixin, db.Model):
+class CompanyEmployee(DefaultMixin, Base):
     __tablename__ = 'company_employee'
     __versioned__ = {}
 
@@ -464,7 +516,7 @@ class CompanyEmployee(DefaultMixin, db.Model):
 #
 
 
-class BadgeDescription(DefaultMixin, db.Model):
+class BadgeDescription(DefaultMixin, Base):
     __tablename__ = 'badge_description'
     __versioned__ = {}
 
@@ -486,7 +538,7 @@ class BadgeDescription(DefaultMixin, db.Model):
         self.certification_circle = None
 
 
-class AccountBadge(DefaultMixin, db.Model):
+class AccountBadge(DefaultMixin, Base):
     __tablename__ = 'account_badge'
     __versioned__ = {}
 
@@ -518,4 +570,7 @@ def receive_before_flush(session, flush_context, instances):
             model_support.before_flush(obj)
 
 
-db.configure_mappers()
+if p2k16.core.boot.model_should_use_flask:
+    db.configure_mappers()
+else:
+    sqlalchemy.orm.configure_mappers()
