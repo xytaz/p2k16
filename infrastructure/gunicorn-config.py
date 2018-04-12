@@ -8,3 +8,5 @@ with open(os.getenv("P2K16_LOGGING")) as f:
 logging.config.dictConfig(cfg)
 
 bind = "127.0.0.1:5000"
+worker_class = "eventlet"
+timeout = 500

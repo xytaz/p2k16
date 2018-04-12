@@ -162,6 +162,26 @@
         $rootScope.p2k16 = P2k16;
     }
 
+    /***
+     * @param $timeout
+     * @param {P2k16} P2k16
+     */
+    function runSocket($timeout, P2k16) {
+
+        var socket = io.connect(location.protocol + '//' + document.domain + ':' + location.port);
+        socket.on('connect', function () {
+            console.log("connect!");
+            socket.emit('my-event', {data: 'I\'m connected!'});
+            P2k16.setConnected(true);
+            $timeout(angular.noop);
+        });
+        socket.on('disconnect', function () {
+            console.log("disconnect!");
+            P2k16.setConnected(false);
+            $timeout(angular.noop);
+        });
+    }
+
     /**
      * @constructor
      */
@@ -275,7 +295,7 @@
                 _.forEach(control.data, function (updated) {
                     put(updated);
                 });
-            // } else if (control.type === "invalidate-collection") {
+                // } else if (control.type === "invalidate-collection") {
             } else {
                 l.i("Unsupported control type", control.type)
             }
@@ -352,6 +372,16 @@
          * @type {Listeners}
          */
         self.accountListeners = new Listeners($rootScope, "account");
+
+        self.connected = false;
+
+        function isConnected() {
+            return self.connected;
+        }
+
+        function setConnected(value) {
+            self.connected = value;
+        }
 
         function isLoggedIn() {
             return !!self.account;
@@ -434,7 +464,10 @@
             addInfos: addInfos,
             messages: self.messages,
 
-            canAdminCircle: canAdminCircle
+            canAdminCircle: canAdminCircle,
+
+            isConnected: isConnected,
+            setConnected: setConnected
         }
     }
 
@@ -473,6 +506,7 @@
         function p2k16HeaderController($scope, $location, P2k16, AuthzService) {
             var self = this;
             self.currentAccount = P2k16.currentAccount;
+            self.isConnected = P2k16.isConnected;
 
             self.logout = function ($event) {
                 $event.preventDefault();
@@ -488,7 +522,7 @@
 
         return {
             restrict: 'E',
-            scope: {active: '@', woot: '='},
+            scope: {active: '@'},
             controller: p2k16HeaderController,
             controllerAs: 'header',
             templateUrl: p2k16_resources.p2k16_header_html
@@ -1011,6 +1045,7 @@
         .config(configSmartCaches)
         .config(config)
         .run(run)
+        .run(runSocket)
         .service("P2k16", P2k16)
         .service("BadgeDataService", BadgeDataService)
         .service("CoreDataService", CoreDataService)

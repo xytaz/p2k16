@@ -10,6 +10,13 @@ div.error-container {
     font-size: smaller;
 }
 
+.ws-connected {
+    color: green;
+}
+
+.ws-disconnected {
+}
+
 /* ui.bootstrap */
 .nav, .pagination, .carousel, .panel-title a {
     cursor: pointer;

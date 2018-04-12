@@ -7,6 +7,7 @@ import flask_bower
 import flask_login
 import werkzeug.exceptions
 from flask.json import JSONEncoder
+from flask_socketio import SocketIO
 from p2k16.core import P2k16UserException, P2k16TechnicalException
 from p2k16.core import make_app, auth, door, mail
 from p2k16.core.log import P2k16LoggingFilter
@@ -181,12 +182,16 @@ db.init_app(app)
 app.json_encoder = P2k16JSONEncoder
 app.config.door_client = door.create_client(app.config)
 
+socket_io = SocketIO(app)
+
 from p2k16.web import badge_blueprint, core_blueprint, door_blueprint, membership_blueprint
 
 app.register_blueprint(badge_blueprint.badge)
 app.register_blueprint(core_blueprint.core)
 app.register_blueprint(door_blueprint.door)
 app.register_blueprint(membership_blueprint.membership)
+
+door_blueprint.init(socket_io)
 
 _env = app.config.get("P2K16_ENV", None)
 

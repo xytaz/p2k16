@@ -4,6 +4,7 @@ import flask
 import flask_login
 import p2k16.core.door
 from flask import Blueprint, jsonify, request
+from flask_socketio import SocketIO
 from p2k16.core import P2k16UserException, event_management
 from p2k16.core.door import DoorClient
 from p2k16.core.models import db
@@ -63,3 +64,12 @@ def door_service():
 
 
 door_service.content = None
+
+
+def on_message(data):
+    logger.info("woop: data={}".format(data))
+    return "hey", "yo"
+
+
+def init(socket_io: SocketIO):
+    socket_io.on_event('my-event', on_message, namespace='/test')
