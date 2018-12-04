@@ -1,4 +1,3 @@
-import crypt
 import enum
 import logging
 import uuid
@@ -6,9 +5,8 @@ from datetime import datetime, timedelta, timezone
 from itertools import chain
 from typing import Optional, List, Iterable
 
-import flask_bcrypt
 from flask_sqlalchemy import SQLAlchemy
-from p2k16.core import P2k16TechnicalException, P2k16UserException
+from p2k16.core import P2k16TechnicalException, P2k16UserException, crypto
 from sqlalchemy import Column, DateTime, Integer, String, ForeignKey, Numeric, Boolean, Sequence, event, func
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -195,8 +193,7 @@ class Account(P2k16Mixin, CreatedAtMixin, UpdatedAtMixin, db.Model):
         if self.system:
             raise P2k16TechnicalException("System users can't have a password")
 
-        pw = flask_bcrypt.generate_password_hash(plaintext)
-        self._password = pw.decode('utf-8')
+        self._password = crypto.encode_password(plaintext)
         self.reset_token = None
         self.reset_token_validity = None
 
@@ -204,14 +201,7 @@ class Account(P2k16Mixin, CreatedAtMixin, UpdatedAtMixin, db.Model):
         if self.system:
             raise P2k16TechnicalException("System users can't log in")
 
-        if self.password.startswith("$2b$"):
-            bs = bytes(self._password, 'utf-8')
-            return flask_bcrypt.check_password_hash(bs, password)
-        if self.password.startswith("$6$"):
-            salt = self.password
-            crypted = crypt.crypt(password, salt)
-            return crypted == self._password
-        return False
+        return crypto.check_password(self._password, password)
 
     def __repr__(self):
         return '<Account:%r, username=%s>' % (self.id, self.username)
