@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -e
+set -x
+
+basedir="$(cd $(dirname $0); pwd)"
+
+if [[ ! -d env ]]
+then
+    virtualenv -p python3 env
+fi
+
+env/bin/pip install --trusted-host github.com -e web --process-dependency-links
+
+./flyway migrate
+
+exec env/bin/python -mp2k16.ldap.server

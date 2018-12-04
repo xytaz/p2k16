@@ -1,5 +1,6 @@
-# TODO: Do not put any p2k16.* imports here!
+# Do not put any p2k16.* imports here!
 import logging
+import os
 from typing import Dict
 
 
@@ -34,3 +35,21 @@ class P2k16LoggingFilter(logging.Filter):
     @classmethod
     def clear(cls):
         cls._data.clear()
+
+
+def configure_logging(app: str, logging_yaml: str):
+    import yaml
+    import logging.config
+
+    def interpolate(loader, node):
+        string = loader.construct_scalar(node)
+        return string.format(app=app)
+
+    if not os.path.isdir("log"):
+        os.mkdir("log")
+
+    yaml.add_constructor(u'!interpolate', interpolate)
+    with open(logging_yaml) as f:
+        cfg = yaml.load(f)
+
+    logging.config.dictConfig(cfg)

@@ -1,14 +1,8 @@
-import yaml
-import logging.config
 import os
 
-with open(os.getenv("P2K16_LOGGING")) as f:
-    cfg = yaml.safe_load(f)
+from p2k16.core.log import configure_logging
 
-logging.config.dictConfig(cfg)
-
-if not os.path.isdir("log"):
-    os.mkdir("log")
+configure_logging("p2k16", os.getenv("P2K16_LOGGING"))
 
 accesslog = "log/access.log"
 

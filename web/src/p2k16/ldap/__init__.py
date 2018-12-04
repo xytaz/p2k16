@@ -1,39 +1,40 @@
+import logging
+import sys
+
 from ldaptor.entry import BaseLDAPEntry
-from ldaptor.protocols import pureldap
+from ldaptor.interfaces import IConnectedLDAPEntry
+from ldaptor.protocols.ldap import ldaperrors
 from ldaptor.protocols.ldap.distinguishedname import DistinguishedName, RelativeDistinguishedName
 from ldaptor.protocols.ldap.distinguishedname import LDAPAttributeTypeAndValue
-from twisted.internet import defer, error
-from twisted.internet.defer import inlineCallbacks, returnValue
-from ldaptor.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
-from twisted.application import service, internet
+from ldaptor.protocols.ldap.ldapserver import LDAPServer
+from twisted.application import service
+from twisted.internet import defer
+from twisted.internet import reactor
+from twisted.internet.defer import inlineCallbacks
 from twisted.internet.endpoints import serverFromString
 from twisted.internet.protocol import ServerFactory
-from twisted.python.components import registerAdapter
 from twisted.python import log
-from ldaptor.inmemory import fromLDIFFile
-from ldaptor.interfaces import IConnectedLDAPEntry
-from ldaptor.protocols.ldap import distinguishedname
-from ldaptor.protocols.ldap.ldapserver import LDAPServer
-import tempfile
-import sys
+from twisted.python.components import registerAdapter
+from twisted.python.failure import Failure
 from txpostgres import txpostgres, reconnection
-from twisted.internet import reactor, task
-from twisted.enterprise import adbapi
+
 from p2k16.core import crypto
+
+logger = logging.getLogger(__name__)
 
 
 class LoggingDetector(reconnection.DeadConnectionDetector):
 
     def startReconnecting(self, f):
-        print("[*] database connection is down (error: {})".format(f.value))
+        logger.warning("Database connection is down (error: {})".format(f.value))
         return reconnection.DeadConnectionDetector.startReconnecting(self, f)
 
     def reconnect(self):
-        print("[*] reconnecting...")
+        logger.warning("Database reconnecting...")
         return reconnection.DeadConnectionDetector.reconnect(self)
 
     def connectionRecovered(self):
-        print("[*] connection recovered")
+        logger.warning("Database connection recovered")
         return reconnection.DeadConnectionDetector.connectionRecovered(self)
 
 
@@ -41,34 +42,20 @@ con = None  # type: txpostgres.Connection
 
 
 def configure_db():
-    def connectionError(f):
-        print("-> connecting failed with {}".format(f))
+    def connection_error(f):
+        logger.info("Database connection failed with {}".format(f))
 
     def connected(_, _con):
         global con
         con = _con
-        print("-> connected, running a query periodically")
+        logger.info("Database connected")
 
-    #     lc = task.LoopingCall(runLoopingQuery, conn)
-    #     return lc.start(2)
-    #
-    # def result(res):
-    #     print("-> query returned result: {}".format(res))
-    #
-    # def onError(f):
-    #     print("-> query failed with {}".format(f.value))
-    #
-    # def runLoopingQuery(conn):
-    #     d = conn.runQuery("select 1")
-    #     d.addCallbacks(result, onError)
-
-    # connect to the database using reconnection
     conn = txpostgres.Connection(detector=LoggingDetector())
     d = conn.connect('dbname=p2k16')
 
     # if the connection failed, log the error and start reconnecting
     d.addErrback(conn.detector.checkForDeadConnection)
-    d.addErrback(connectionError)
+    d.addErrback(connection_error)
     d.addCallback(connected, conn)
 
 
@@ -216,35 +203,33 @@ class LDAPServerFactory(ServerFactory):
         return proto
 
 
-if __name__ == "__main__":
-    from twisted.internet import reactor
-
-    if len(sys.argv) == 2:
-        port = int(sys.argv[1])
-    else:
-        port = 8080
+def run_ldap_server(ldap_port, ldaps_port, ldaps_cert, ldaps_key):
+    # Configure logging
+    logging_observer = log.PythonLoggingObserver()
+    logging_observer.start()
 
     base_dn = DistinguishedName(stringValue="dc=bitraf,dc=no")
 
-    log.startLogging(sys.stderr)
-
-
     def make_forest(factory):
-        # print("x={}".format(x))
         forest = Forest(factory.current_proto)
         forest.add_tree(Tree(base_dn, con))
         return forest
-
 
     registerAdapter(make_forest, LDAPServerFactory, IConnectedLDAPEntry)
     factory = LDAPServerFactory()
     factory.debug = True
     application = service.Application("ldaptor-server")
-    myService = service.IServiceCollection(application)
-    serverEndpointStr = "tcp:{0}".format(port)
-    e = serverFromString(reactor, serverEndpointStr)
+    my_service = service.IServiceCollection(application)
+    e = serverFromString(reactor, "tcp:{0}".format(ldap_port))
     d = e.listen(factory)
 
-    configure_db()
+    def server_started(*args):
+        # logger.info("Launching LDAP server. LDAP port: {}, LDAPS port: {}".format(ldap_port, ldaps_port))
+        configure_db()
+        reactor.run()
 
-    reactor.run()
+    def server_failed(x: Failure):
+        print(x.value, file=sys.stderr)
+
+    d.addCallback(server_started)
+    d.addErrback(server_failed)

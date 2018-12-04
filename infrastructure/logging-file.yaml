@@ -13,7 +13,7 @@ handlers:
     formatter: p2k16
     filters: [p2k16]
 
-    filename: log/p2k16.log
+    filename: !interpolate "log/{app}.log"
 
 root:
   level: DEBUG

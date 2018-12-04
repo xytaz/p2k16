@@ -2,12 +2,6 @@ PyYAML
 # Stuff for development, put the application's dependencies in setup.py
 pytest
 
-twisted
-ldaptor
-service_identity
-txpostgres
-# pyPgSQL
-
 # These are here just to satisfy PyCharm
 flask
 ldif3
