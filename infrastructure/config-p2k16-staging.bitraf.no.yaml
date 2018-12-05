@@ -7,4 +7,4 @@ MAIL_FROM: post@bitraf.no
 
 RESOURCE_HASH_TYPE: mtime
 
-LDAP_PORT: 10389
+LDAP_PORT: 389

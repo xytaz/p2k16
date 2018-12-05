@@ -2,13 +2,8 @@ import logging
 import os
 
 from flask import Flask
-from flask_env import MetaFlaskEnv
 
 logger = logging.getLogger(__name__)
-
-
-class Configuration(metaclass=MetaFlaskEnv):
-    pass
 
 
 class P2k16UserException(Exception):
@@ -35,8 +30,5 @@ def make_app():
     from p2k16.core.log import load_config
     cfg = load_config()
     app.config.from_mapping(cfg)
-
-    # Allow the environment variables to override by loading them lastly
-    app.config.from_object(Configuration)
 
     return app

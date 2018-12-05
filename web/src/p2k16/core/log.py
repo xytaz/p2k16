@@ -83,4 +83,21 @@ def load_config():
         for k, v in yaml.load(f).items():
             cfg[k] = v
 
+    logger.info("Loading config from environment")
+    for key, value in os.environ.items():
+        if value.lower() in ('true', 'false'):
+            value = True if value.lower() == 'true' else False
+        elif '.' in value:
+            try:
+                value = float(value)
+            except ValueError:
+                pass
+        else:
+            try:
+                value = int(value)
+            except ValueError:
+                pass
+
+        cfg[key] = value
+
     return cfg
