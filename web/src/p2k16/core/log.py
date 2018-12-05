@@ -1,6 +1,7 @@
 # Do not put any p2k16.* imports here!
 import logging
 import os
+import yaml
 from typing import Dict
 
 
@@ -53,3 +54,33 @@ def configure_logging(app: str, logging_yaml: str):
         cfg = yaml.load(f)
 
     logging.config.dictConfig(cfg)
+
+
+def load_config():
+    logger = logging.getLogger(__name__)
+    cfg = {}
+
+    p2k16_config = os.getenv('P2K16_CONFIG')
+    if p2k16_config is None:
+        return cfg
+
+    p2k16_config = os.path.abspath(p2k16_config)
+
+    config_default = os.path.join(os.path.dirname(p2k16_config), "config-default.yaml")
+    config_default = os.path.abspath(config_default)
+
+    logger.info("Loading defaults from {}".format(config_default))
+
+    try:
+        with open(config_default, "r") as f:
+            for k, v in yaml.load(f).items():
+                cfg[k] = v
+    except IOError:
+        pass
+
+    logger.info("Loading config from {}".format(p2k16_config))
+    with open(p2k16_config, "r") as f:
+        for k, v in yaml.load(f).items():
+            cfg[k] = v
+
+    return cfg

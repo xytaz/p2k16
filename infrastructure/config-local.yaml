@@ -1,0 +1,16 @@
+DEBUG: True
+SECRET_KEY: secret key 3
+SQLALCHEMY_DATABASE_URI: postgresql://p2k16-web:p2k16-web@localhost/p2k16
+SQLALCHEMY_ECHO: True
+
+MQTT_USERNAME: None # No username is required for testing
+MQTT_PASSWORD:
+
+LDAP_DB: dbname=p2k16 user=p2k16-ldap password=p2k16-ldap host=localhost
+
+MAIL_HOST: mail
+MAIL_FROM: post@bitraf.no
+
+RESOURCE_HASH_TYPE: mtime
+
+P2K16_ENV: local

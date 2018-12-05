@@ -9,5 +9,4 @@ cd "$basedir"
 mkdir -p log
 export P2K16_LOGGING=src/infrastructure/logging-file.yaml
 
-exec env/bin/python \
-    p2k16.ldap.server
+exec env/bin/python -mp2k16.ldap.server

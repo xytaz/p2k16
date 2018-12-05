@@ -41,7 +41,7 @@ class LoggingDetector(reconnection.DeadConnectionDetector):
 con = None  # type: txpostgres.Connection
 
 
-def configure_db():
+def configure_db(dsn: str):
     def connection_error(f):
         logger.info("Database connection failed with {}".format(f))
 
@@ -51,7 +51,7 @@ def configure_db():
         logger.info("Database connected")
 
     conn = txpostgres.Connection(detector=LoggingDetector())
-    d = conn.connect('dbname=p2k16')
+    d = conn.connect(dsn)
 
     # if the connection failed, log the error and start reconnecting
     d.addErrback(conn.detector.checkForDeadConnection)
@@ -67,11 +67,11 @@ class Account(BaseLDAPEntry):
 
     def _bind(self, password):
         password = password.decode("utf-8")
-        log.msg("Account.bind: password={}".format(password))
+        logger.info("Account.bind: password={}".format(password))
 
         for key in self._user_password_keys:
             for digest in self.get(key, []):
-                log.msg("Account.bind: userPassword={}".format(digest))
+                logger.info("Account.bind: userPassword={}".format(digest))
                 if crypto.check_password(digest, password):
                     return self
         raise ldaperrors.LDAPInvalidCredentials()
@@ -97,9 +97,10 @@ def _create_account(row, people_dn):
 
 
 @inlineCallbacks
-def lookup_account(username, bound_dn: Account, people_dn):
-    log.msg("bound_dn={}".format(bound_dn.toWire() if bound_dn is not None else ""))
-    res = yield con.runQuery("select username, name, email, password from account where username=%s", [username])
+def lookup_account(uid, bound_dn: Account, people_dn):
+    logger.info("bound_dn={}".format(bound_dn.toWire() if bound_dn is not None else ""))
+    args = [uid]
+    res = yield con.runQuery('SELECT uid, "displayName", mail, "userPassword" FROM ldap_people WHERE uid=%s', args)
 
     if len(res) == 1:
         return _create_account(res[0], people_dn)
@@ -108,8 +109,8 @@ def lookup_account(username, bound_dn: Account, people_dn):
 
 @inlineCallbacks
 def search_account(bound_dn: Account, people_dn):
-    log.msg("bound_dn={}".format(bound_dn.toWire() if bound_dn is not None else ""))
-    res = yield con.runQuery("select username, name, email, NULL as password from account")
+    logger.info("bound_dn={}".format(bound_dn.toWire() if bound_dn is not None else ""))
+    res = yield con.runQuery('SELECT uid, "displayName", mail, NULL AS "userPassword" FROM ldap_people')
 
     return [_create_account(row, people_dn) for row in res]
 
@@ -130,6 +131,7 @@ class Forest(object):
             if tree.mount_point.contains(dn):
                 return tree.lookup(self, dn)
 
+        logger.info("lookup: dn={}".format(dn.toWire()))
         return defer.fail()
 
 
@@ -141,9 +143,7 @@ class Tree(object):
 
     @inlineCallbacks
     def lookup(self, context, dn: DistinguishedName, *args):
-        log.msg("lookup: dn={}, args={}".format(dn.toWire(), args))
-        # log.msg("rdn={}".format(dn.listOfRDNs))
-        # log.msg("dn.up={}".format(dn.up().toWire()))
+        logger.info("lookup: dn={}, args={}".format(dn.toWire(), args))
 
         if dn == self.people_dn:
             return Focus(self, context, dn)
@@ -163,7 +163,7 @@ class Tree(object):
             else:
                 return None
 
-        raise ldaperrors.LDAPProtocolError("lookup!!")
+        return None
 
 
 class Focus(object):
@@ -175,14 +175,14 @@ class Focus(object):
     @inlineCallbacks
     def search(self, filterObject, attributes, scope, derefAliases, sizeLimit, timeLimit, typesOnly, callback, *args,
                **kwargs):
-        log.msg("Focus.search: args={}, kwargs={}".format(args, kwargs))
-        # log.msg("filterObject={}".format([filterObject]))
-        # log.msg("attributes={}".format(attributes))
-        # log.msg("scope={}".format(scope))
-        # log.msg("derefAliases={}".format(derefAliases))
-        # log.msg("sizeLimit={}".format(sizeLimit))
-        # log.msg("timeLimit={}".format(timeLimit))
-        # log.msg("typesOnly={}".format(typesOnly))
+        logger.info("Focus.search: args={}, kwargs={}".format(args, kwargs))
+        # logger.info("filterObject={}".format([filterObject]))
+        # logger.info("attributes={}".format(attributes))
+        # logger.info("scope={}".format(scope))
+        # logger.info("derefAliases={}".format(derefAliases))
+        # logger.info("sizeLimit={}".format(sizeLimit))
+        # logger.info("timeLimit={}".format(timeLimit))
+        # logger.info("typesOnly={}".format(typesOnly))
 
         accounts = yield search_account(self.context.bound_user(), self.tree.people_dn)
         for account in accounts:
@@ -203,7 +203,7 @@ class LDAPServerFactory(ServerFactory):
         return proto
 
 
-def run_ldap_server(ldap_port, ldaps_port, ldaps_cert, ldaps_key):
+def run_ldap_server(ldap_port, dsn, ldaps_port, ldaps_cert, ldaps_key):
     # Configure logging
     logging_observer = log.PythonLoggingObserver()
     logging_observer.start()
@@ -225,7 +225,7 @@ def run_ldap_server(ldap_port, ldaps_port, ldaps_cert, ldaps_key):
 
     def server_started(*args):
         # logger.info("Launching LDAP server. LDAP port: {}, LDAPS port: {}".format(ldap_port, ldaps_port))
-        configure_db()
+        configure_db(dsn)
         reactor.run()
 
     def server_failed(x: Failure):

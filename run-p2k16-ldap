@@ -11,7 +11,11 @@ then
 fi
 
 env/bin/pip install --trusted-host github.com -e web --process-dependency-links
+env/bin/pip install -e git+https://github.com/twisted/ldaptor.git'#egg=ldaptor'
 
 ./flyway migrate
+
+export P2K16_CONFIG=$basedir/infrastructure/config-local.yaml
+export P2K16_LOGGING=$basedir/infrastructure/logging-stdout.yaml
 
 exec env/bin/python -mp2k16.ldap.server
