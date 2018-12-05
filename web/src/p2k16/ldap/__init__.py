@@ -1,6 +1,7 @@
 import logging
 import sys
 
+from ldaptor._encoder import to_unicode
 from ldaptor.entry import BaseLDAPEntry
 from ldaptor.interfaces import IConnectedLDAPEntry
 from ldaptor.protocols.ldap import ldaperrors
@@ -65,13 +66,15 @@ class Account(BaseLDAPEntry):
         # self.dn = DistinguishedName(dn)
         # self.attrs = attrs or {}
 
+    @property
+    def uid(self):
+        return self.dn.listOfRDNs[0].split()[0].value
+
     def _bind(self, password):
         password = password.decode("utf-8")
-        logger.info("Account.bind: password={}".format(password))
 
         for key in self._user_password_keys:
             for digest in self.get(key, []):
-                logger.info("Account.bind: userPassword={}".format(digest))
                 if crypto.check_password(digest, password):
                     return self
         raise ldaperrors.LDAPInvalidCredentials()
@@ -79,26 +82,27 @@ class Account(BaseLDAPEntry):
 
 def _create_account(row, people_dn):
     base = list(people_dn.listOfRDNs)
-    (username, name, email, password) = row
-    attrs = {"uid": [username]}
+    (uid, displayName, mail, userPassword) = row
+    attrs = {"uid": [uid]}
 
-    if name is not None:
-        attrs["displayName"] = [name]
+    if displayName is not None:
+        attrs["displayName"] = [displayName]
 
-    if email is not None:
-        attrs["mail"] = [email]
+    if mail is not None:
+        attrs["mail"] = [mail]
 
-    if password is not None:
-        attrs["userPassword"] = [password]
+    if userPassword is not None:
+        attrs["userPassword"] = [userPassword]
+    attrs["foo"] = ["bar"]
 
-    av = LDAPAttributeTypeAndValue(attributeType="uid", value=username)
+    av = LDAPAttributeTypeAndValue(attributeType="uid", value=uid)
     dn = [RelativeDistinguishedName(attributeTypesAndValues=[av])] + base
     return Account(dn, attrs)
 
 
 @inlineCallbacks
-def lookup_account(uid, bound_dn: Account, people_dn):
-    logger.info("bound_dn={}".format(bound_dn.toWire() if bound_dn is not None else ""))
+def lookup_account(uid: str, bound_dn: Account, people_dn):
+    logger.info("lookup_account: uid={}, bind={}".format(uid, bound_dn.uid if bound_dn is not None else "<anon>"))
     args = [uid]
     res = yield con.runQuery('SELECT uid, "displayName", mail, "userPassword" FROM ldap_people WHERE uid=%s', args)
 
@@ -108,11 +112,35 @@ def lookup_account(uid, bound_dn: Account, people_dn):
 
 
 @inlineCallbacks
-def search_account(bound_dn: Account, people_dn):
-    logger.info("bound_dn={}".format(bound_dn.toWire() if bound_dn is not None else ""))
-    res = yield con.runQuery('SELECT uid, "displayName", mail, NULL AS "userPassword" FROM ldap_people')
+def search_account(bound_dn: Account, people_dn, filter_object, attributes, size_limit):
+    logger.info("search_account: bound_dn={}".format(bound_dn.uid if bound_dn is not None else "<anon>"))
 
-    return [_create_account(row, people_dn) for row in res]
+    attributes = set([to_unicode(a) for a in attributes])
+    if "*" in attributes or b"*" in attributes:
+        attributes = None
+    logger.debug("attributes={}".format(attributes))
+
+    args = []
+    parts = [
+        "uid",
+        '"displayName"' if attributes is None or "displayName" in attributes else "NULL",
+        "mail" if attributes is None or "mail" in attributes else "NULL"
+    ]
+    if attributes is None or "userPassword" in attributes:
+        parts += ['(CASE WHEN uid=%s THEN "userPassword" ELSE NULL END)']
+        args = [bound_dn.uid]
+    else:
+        parts += ["NULL"]
+    q = "SELECT {} FROM ldap_people".format(", ".join(parts))
+
+    if size_limit is not None and size_limit > 0:
+        q += " LIMIT %s"
+        args += [size_limit]
+
+    logger.debug("sql={}".format(q))
+    cursor = yield con.runQuery(q, args)
+
+    return [_create_account(row, people_dn) for row in cursor]
 
 
 class Forest(object):
@@ -131,8 +159,7 @@ class Forest(object):
             if tree.mount_point.contains(dn):
                 return tree.lookup(self, dn)
 
-        logger.info("lookup: dn={}".format(dn.toWire()))
-        return defer.fail()
+        raise ldaperrors.LDAPNoSuchObject(dn)
 
 
 class Tree(object):
@@ -143,9 +170,9 @@ class Tree(object):
 
     @inlineCallbacks
     def lookup(self, context, dn: DistinguishedName, *args):
-        logger.info("lookup: dn={}, args={}".format(dn.toWire(), args))
+        # logger.info("lookup: dn={}, args={}".format(dn.toWire(), args))
 
-        if dn == self.people_dn:
+        if dn == self.people_dn or dn == self.mount_point:
             return Focus(self, context, dn)
 
         if dn.up() == self.people_dn:
@@ -159,11 +186,7 @@ class Tree(object):
                     # ldaperrors.LDAPInvalidCredentials()
                     return account
 
-                return None
-            else:
-                return None
-
-        return None
+        raise ldaperrors.LDAPNoSuchObject(dn)
 
 
 class Focus(object):
@@ -175,16 +198,16 @@ class Focus(object):
     @inlineCallbacks
     def search(self, filterObject, attributes, scope, derefAliases, sizeLimit, timeLimit, typesOnly, callback, *args,
                **kwargs):
-        logger.info("Focus.search: args={}, kwargs={}".format(args, kwargs))
         # logger.info("filterObject={}".format([filterObject]))
-        # logger.info("attributes={}".format(attributes))
+        logger.info("attributes={}".format(attributes))
         # logger.info("scope={}".format(scope))
         # logger.info("derefAliases={}".format(derefAliases))
         # logger.info("sizeLimit={}".format(sizeLimit))
         # logger.info("timeLimit={}".format(timeLimit))
         # logger.info("typesOnly={}".format(typesOnly))
 
-        accounts = yield search_account(self.context.bound_user(), self.tree.people_dn)
+        accounts = yield search_account(self.context.bound_user(), self.tree.people_dn, filterObject, attributes,
+                                        sizeLimit)
         for account in accounts:
             callback(account)
 
@@ -217,7 +240,7 @@ def run_ldap_server(ldap_port, dsn, ldaps_port, ldaps_cert, ldaps_key):
 
     registerAdapter(make_forest, LDAPServerFactory, IConnectedLDAPEntry)
     factory = LDAPServerFactory()
-    factory.debug = True
+    factory.debug = False
     application = service.Application("ldaptor-server")
     my_service = service.IServiceCollection(application)
     e = serverFromString(reactor, "tcp:{0}".format(ldap_port))
