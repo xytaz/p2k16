@@ -118,7 +118,6 @@ def search_account(bound_dn: Account, people_dn, filter_object, attributes, size
     attributes = set([to_unicode(a) for a in attributes])
     if "*" in attributes or b"*" in attributes:
         attributes = None
-    logger.debug("attributes={}".format(attributes))
 
     args = []
     parts = [
@@ -199,7 +198,7 @@ class Focus(object):
     def search(self, filterObject, attributes, scope, derefAliases, sizeLimit, timeLimit, typesOnly, callback, *args,
                **kwargs):
         # logger.info("filterObject={}".format([filterObject]))
-        logger.info("attributes={}".format(attributes))
+        # logger.info("attributes={}".format(attributes))
         # logger.info("scope={}".format(scope))
         # logger.info("derefAliases={}".format(derefAliases))
         # logger.info("sizeLimit={}".format(sizeLimit))
