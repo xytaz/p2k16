@@ -4,12 +4,13 @@ import sys
 from ldaptor._encoder import to_unicode
 from ldaptor.entry import BaseLDAPEntry
 from ldaptor.interfaces import IConnectedLDAPEntry
+from ldaptor.protocols import pureldap
 from ldaptor.protocols.ldap import ldaperrors
 from ldaptor.protocols.ldap.distinguishedname import DistinguishedName, RelativeDistinguishedName
 from ldaptor.protocols.ldap.distinguishedname import LDAPAttributeTypeAndValue
 from ldaptor.protocols.ldap.ldapserver import LDAPServer
+from p2k16.core import crypto
 from twisted.application import service
-from twisted.internet import defer
 from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks
 from twisted.internet.endpoints import serverFromString
@@ -18,8 +19,7 @@ from twisted.python import log
 from twisted.python.components import registerAdapter
 from twisted.python.failure import Failure
 from txpostgres import txpostgres, reconnection
-
-from p2k16.core import crypto
+from typing import Set
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,45 @@ def configure_db(dsn: str):
     d.addCallback(connected, conn)
 
 
+def filter_object_to_where(filter_object):
+    if isinstance(filter_object, pureldap.LDAPFilter_present):
+        object_class = to_unicode(filter_object.value)
+
+        if object_class.lower() in Account.valid_object_classes:
+            return ["1=1"], []
+
+    elif isinstance(filter_object, pureldap.LDAPFilter_equalityMatch):
+        field = to_unicode(filter_object.attributeDesc.value)
+        value = to_unicode(filter_object.assertionValue.value)
+
+        logger.debug("equality-match: field={}, value={}".format(field, value))
+
+        if field in Account.valid_fields:
+            return ["{}=%s".format(field)], [value]
+
+    # elif isinstance(filter_object, pureldap.LDAPFilter_substrings):
+    #     field = to_unicode(filter_object.type)
+    #     value = filter_object.asText()
+    #
+    #     logger.debug("substrings: field={}, value={}".format(field, value))
+    #
+    #     if field in Account.valid_fields:
+    #         return ["{} LIKE %s || '%'".format(field)], [value]
+
+    logger.warning("Unsupported filter object: {}".format(repr(filter_object)))
+    raise ldaperrors.LDAPInappropriateMatching()
+
+
 class Account(BaseLDAPEntry):
+    valid_object_classes = {oc.lower() for oc in {
+        "objectClass",
+        "posixAccount"}}
+
+    valid_fields = {f.lower() for f in {
+        "uid",
+        "name",
+        "mail"}}
+
     def __init__(self, dn, attrs=None):
         super().__init__(dn, attrs or {})
         # self.dn = DistinguishedName(dn)
@@ -132,11 +170,21 @@ def search_account(bound_dn: Account, people_dn, filter_object, attributes, size
         parts += ["NULL"]
     q = "SELECT {} FROM ldap_people".format(", ".join(parts))
 
+    (where, where_args) = filter_object_to_where(filter_object)
+
+    if where is None:
+        logger.warning("Unsupported filter")
+        return []
+
+    if len(where):
+        q += " WHERE " + " AND ".join(where)
+        args += where_args
+
     if size_limit is not None and size_limit > 0:
         q += " LIMIT %s"
         args += [size_limit]
 
-    logger.debug("sql={}".format(q))
+    logger.debug("sql={}, args={}".format(q, args))
     cursor = yield con.runQuery(q, args)
 
     return [_create_account(row, people_dn) for row in cursor]
@@ -197,8 +245,8 @@ class Focus(object):
     @inlineCallbacks
     def search(self, filterObject, attributes, scope, derefAliases, sizeLimit, timeLimit, typesOnly, callback, *args,
                **kwargs):
-        # logger.info("filterObject={}".format([filterObject]))
-        # logger.info("attributes={}".format(attributes))
+        logger.info("filterObject={}".format([filterObject]))
+        logger.info("attributes={}".format(attributes))
         # logger.info("scope={}".format(scope))
         # logger.info("derefAliases={}".format(derefAliases))
         # logger.info("sizeLimit={}".format(sizeLimit))

@@ -11,6 +11,7 @@ then
 fi
 
 env/bin/pip install --trusted-host github.com -e web --process-dependency-links
+env/bin/pip uninstall -y ldaptor
 env/bin/pip install -e git+https://github.com/twisted/ldaptor.git'#egg=ldaptor'
 
 ./flyway migrate
